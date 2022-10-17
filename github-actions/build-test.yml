@@ -1,0 +1,57 @@
+name: CI - Build-Stage branch
+
+on:
+  pull_request:
+    branches: [ build-stage ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+       node-version: [16.14.2]
+
+
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v1
+        with:
+          node-version: ${{ matrix.node-version }}
+          
+      - name: install dependencies and build project
+        run: yarn --frozen-lockfile
+
+      - name: Run unit tests
+        run: |
+          echo 'UNIT_TEST_RESULTS<<EOF' >> $GITHUB_ENV
+          lines_in_error=$(npm run test --silent 2>&1 | egrep -vw \> | tee -a $GITHUB_ENV | awk '{print $1}' | grep FAIL | wc -l)
+          echo 'EOF' >> $GITHUB_ENV
+          echo "::set-output name=lines_in_error::$lines_in_error"
+      - name: Evaluate Unit Test Results
+        if: ${{ steps.get_line_rate.outputs.lines_in_error > 0 }}
+        uses: actions/github-script@v3
+        with:
+          script: |
+            core.setFailed('Some unit tests failed')
+      # - name: Upload test coverage to Codecov
+      #   uses: codecov/codecov-action@v3
+      #   with:
+      #     token: ${{ secrets.CODECOV_TOKEN }}
+      #     files: ./coverage/clover.xml
+
+      - name: build project
+        run: yarn build
+
+      - name: Send PR Test Results to slack
+        if: always()
+        id: slack
+        uses: slackapi/slack-github-action@v1.19.0
+        with:
+          channel-id: metadex-notifications
+          slack-message: "GitHub Action Unit Test Results from PR ${{ github.event.pull_request.html_url}}: ${{ env.UNIT_TEST_RESULTS }}"
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
